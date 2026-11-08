@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101827">
+  <title>Remote Audio Link</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand-mark">RA</div>
+      <div><div class="brand">Remote Audio Link</div><div class="muted small">Private, consent-based live audio rooms</div></div>
+      <span class="secure-pill">● Encrypted peer audio</span>
+    </header>
+
+    <section class="hero">
+      <div class="eyebrow">LIVE AUDIO CONNECTION</div>
+      <h1>Hear remote devices.<br><span>Across the internet.</span></h1>
+      <p>Connect phones and computers in one room. Each source explicitly starts and displays its microphone or shared-tab audio transmission.</p>
+    </section>
+
+    <section id="joinPanel" class="panel join-grid">
+      <div>
+        <h2>Join a room</h2>
+        <p class="muted">Use the same room code on every device you want to connect.</p>
+        <label for="room">Room code</label>
+        <div class="input-row"><input id="room" maxlength="24" placeholder="E.G. NAIROBI-01" autocomplete="off"><button id="generate" class="button secondary">Generate</button></div>
+        <label for="name">Your display name</label>
+        <input id="name" maxlength="32" placeholder="e.g. Nairobi phone">
+        <label for="role">Device role</label>
+        <select id="role">
+          <option value="source">Source — transmit audio</option>
+          <option value="listener">Listener — receive audio only</option>
+          <option value="both">Both — transmit and receive</option>
+        </select>
+        <label for="pin">Room PIN <span class="muted">(if configured)</span></label>
+        <input id="pin" type="password" placeholder="Optional room PIN" autocomplete="off">
+        <button id="join" class="button primary wide">Join room</button>
+        <div id="joinError" class="error" role="alert"></div>
+      </div>
+      <aside class="how-card">
+        <div class="how-icon">⌁</div>
+        <h3>How to connect</h3>
+        <ol>
+          <li>Generate or enter a room code.</li>
+          <li>Share it with people you trust.</li>
+          <li>Join from each browser/device.</li>
+          <li>Sources press <b>Start transmission</b>.</li>
+          <li>Listeners press play on the audio tiles.</li>
+        </ol>
+        <p class="notice">A room code is not a secret. Use a PIN and share both details privately.</p>
+      </aside>
+    </section>
+
+    <section id="roomPanel" class="hidden">
+      <div class="room-heading panel">
+        <div><div class="eyebrow">CONNECTED ROOM</div><h2 id="roomTitle">—</h2><div id="connectionState" class="muted small">Connecting…</div></div>
+        <div class="room-actions"><button id="copyInvite" class="button secondary">Copy room code</button><button id="leave" class="button danger">Leave</button></div>
+      </div>
+      <div class="panel controls">
+        <div class="control-heading"><div><h3>Your transmission</h3><p class="muted small">Only transmit when you intend to share audio.</p></div><span id="txBadge" class="status off">NOT TRANSMITTING</span></div>
+        <div class="source-controls">
+          <label class="check"><input type="checkbox" id="micEnabled" checked> Microphone</label>
+          <label class="check"><input type="checkbox" id="systemEnabled" checked> Shared tab / screen audio</label>
+          <button id="startTx" class="button primary">Start transmission</button>
+          <button id="stopTx" class="button secondary" disabled>Stop transmission</button>
+        </div>
+        <p class="muted tiny">Microphone requires permission. Shared audio uses the browser's screen/tab-share picker and only captures audio you explicitly select. Most Android browsers do not expose system audio capture; use a desktop Chrome browser for tab audio.</p>
+        <div id="txMessage" class="muted small"></div>
+      </div>
+      <div class="section-head"><div><h3>Room devices</h3><p class="muted small">Live audio from connected, authorized sources appears below.</p></div><span id="deviceCount" class="count">0 devices</span></div>
+      <div id="devices" class="devices"></div>
+      <div id="roomError" class="error" role="alert"></div>
+    </section>
+    <footer>Remote Audio Link · WebRTC peer-to-peer audio · Use only with the knowledge and permission of everyone involved.</footer>
+  </main>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
