@@ -1,99 +1,206 @@
+
 import express from "express";
 import http from "node:http";
-import crypto from "node:crypto";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import helmet from "helmet";
 import { Server } from "socket.io";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const app = express();
 const server = http.createServer(app);
+
 const PORT = process.env.PORT || 3000;
-const CLIENT_ORIGIN = (process.env.CLIENT_ORIGIN || "").split(",").map(x => x.trim()).filter(Boolean);
+const PUBLIC_DIR = path.join(__dirname, "public");
+
 const ROOM_PIN = process.env.ROOM_PIN || "";
-const MAX_ROOM_SIZE = Number(process.env.MAX_ROOM_SIZE || 12);
-const MAX_ROOMS = Number(process.env.MAX_ROOMS || 100);
+const MAX_ROOM_SIZE = Number(process.env.MAX_ROOM_SIZE) || 12;
+const MAX_ROOMS = Number(process.env.MAX_ROOMS) || 100;
 
 app.disable("x-powered-by");
-app.use(helmet({ crossOriginEmbedderPolicy: false }));
-app.use(express.static("public", { extensions: ["html"] }));
-app.get("/health", (_req, res) => res.json({ ok: true, service: "remote-audio-link" }));
+app.set("trust proxy", 1);
 
-const io = new Server(server, {
-  cors: {
-    origin: (origin, callback) => {
-      if (!origin || CLIENT_ORIGIN.length === 0 || CLIENT_ORIGIN.includes(origin)) return callback(null, true);
-      return callback(new Error("Origin not allowed"));
-    },
-    methods: ["GET", "POST"]
-  },
-  maxHttpBufferSize: 1e5,
-  transports: ["websocket", "polling"]
+app.use(
+  helmet({
+    crossOriginEmbedderPolicy: false,
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "https://cdn.socket.io"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        connectSrc: ["'self'", "ws:", "wss:"],
+        imgSrc: ["'self'", "data:"],
+        mediaSrc: ["'self'", "blob:"],
+        objectSrc: ["'none'"],
+        frameAncestors: ["'none'"]
+      }
+    }
+  })
+);
+
+// Health check for Render
+app.get("/health", (req, res) => {
+  res.status(200).json({
+    status: "OK",
+    service: "Remote Audio Link",
+    timestamp: new Date().toISOString()
+  });
 });
 
-const rooms = new Map();
-const cleanRoom = value => String(value || "").toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 24);
-const cleanName = value => String(value || "Guest").replace(/[<>]/g, "").trim().slice(0, 32) || "Guest";
+// Main frontend page
+app.get("/", (req, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, "index.html"));
+});
 
-function publicPeers(room, exceptId) {
-  return [...(rooms.get(room)?.values() || [])]
-    .filter(p => p.id !== exceptId)
-    .map(({ id, name, role }) => ({ id, name, role }));
+// Serve frontend assets
+app.use(express.static(PUBLIC_DIR));
+
+// Room storage
+const rooms = new Map();
+
+function cleanRoom(value) {
+  return String(value || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9-]/g, "")
+    .slice(0, 24);
 }
 
+function cleanName(value) {
+  return String(value || "Guest")
+    .replace(/[<>]/g, "")
+    .trim()
+    .slice(0, 32) || "Guest";
+}
+
+function getPeers(room, excludeId) {
+  const members = rooms.get(room);
+  if (!members) return [];
+
+  return [...members.values()]
+    .filter(peer => peer.id !== excludeId)
+    .map(peer => ({
+      id: peer.id,
+      name: peer.name,
+      role: peer.role
+    }));
+}
+
+// Socket.IO setup
+const io = new Server(server, {
+  cors: {
+    origin: true,
+    methods: ["GET", "POST"]
+  },
+  maxHttpBufferSize: 100000
+});
+
+// Validate room access
 io.use((socket, next) => {
   const auth = socket.handshake.auth || {};
+
   const room = cleanRoom(auth.room);
-  const name = cleanName(auth.name);
-  const role = ["source", "listener", "both"].includes(auth.role) ? auth.role : "source";
   const pin = String(auth.pin || "");
-  if (!/^[A-Z0-9-]{4,24}$/.test(room)) return next(new Error("Enter a room code of 4–24 letters/numbers."));
-  if (ROOM_PIN && pin !== ROOM_PIN) return next(new Error("Incorrect room PIN."));
+  const role = ["source", "listener", "both"].includes(auth.role)
+    ? auth.role
+    : "source";
+
+  if (!/^[A-Z0-9-]{4,24}$/.test(room)) {
+    return next(new Error("Invalid room code."));
+  }
+
+  if (ROOM_PIN && pin !== ROOM_PIN) {
+    return next(new Error("Incorrect room PIN."));
+  }
+
   socket.data.room = room;
-  socket.data.name = name;
+  socket.data.name = cleanName(auth.name);
   socket.data.role = role;
+
   next();
 });
 
+// Handle connections
 io.on("connection", socket => {
   const room = socket.data.room;
+
   if (!rooms.has(room) && rooms.size >= MAX_ROOMS) {
-    socket.emit("app-error", "Server room limit reached. Try again later.");
-    socket.disconnect(true);
-    return;
-  }
-  if (!rooms.has(room)) rooms.set(room, new Map());
-  const members = rooms.get(room);
-  if (members.size >= MAX_ROOM_SIZE) {
-    socket.emit("app-error", "This room is full.");
+    socket.emit("app-error", "Server room limit reached.");
     socket.disconnect(true);
     return;
   }
 
-  const existing = publicPeers(room);
-  members.set(socket.id, { id: socket.id, name: socket.data.name, role: socket.data.role });
+  if (!rooms.has(room)) {
+    rooms.set(room, new Map());
+  }
+
+  const members = rooms.get(room);
+
+  if (members.size >= MAX_ROOM_SIZE) {
+    socket.emit("app-error", "Room is full.");
+    socket.disconnect(true);
+    return;
+  }
+
+  const existingPeers = getPeers(room);
+
+  const peer = {
+    id: socket.id,
+    name: socket.data.name,
+    role: socket.data.role
+  };
+
+  members.set(socket.id, peer);
   socket.join(room);
+
   socket.emit("room-ready", {
     selfId: socket.id,
-    peers: existing,
     room,
-    maxRoomSize: MAX_ROOM_SIZE
-  });
-  socket.to(room).emit("peer-joined", {
-    peer: { id: socket.id, name: socket.data.name, role: socket.data.role }
+    peers: existingPeers
   });
 
-  socket.on("signal", ({ to, description, candidate } = {}) => {
-    if (typeof to !== "string" || !members.has(to)) return;
+  socket.to(room).emit("peer-joined", { peer });
+
+  // WebRTC signaling
+  socket.on("signal", message => {
+    if (!message || typeof message.to !== "string") return;
+
+    if (!members.has(message.to)) return;
+    if (message.to === socket.id) return;
+
     const payload = { from: socket.id };
-    if (description && typeof description === "object") payload.description = description;
-    if (candidate && typeof candidate === "object") payload.candidate = candidate;
-    io.to(to).emit("signal", payload);
+
+    if (message.description) {
+      payload.description = message.description;
+    }
+
+    if (message.candidate) {
+      payload.candidate = message.candidate;
+    }
+
+    io.to(message.to).emit("signal", payload);
   });
 
+  // Disconnect handling
   socket.on("disconnect", () => {
-    members.delete(socket.id);
-    socket.to(room).emit("peer-left", { id: socket.id });
-    if (members.size === 0) rooms.delete(room);
+    const currentMembers = rooms.get(room);
+    if (!currentMembers) return;
+
+    currentMembers.delete(socket.id);
+
+    socket.to(room).emit("peer-left", {
+      id: socket.id
+    });
+
+    if (currentMembers.size === 0) {
+      rooms.delete(room);
+    }
   });
 });
 
-server.listen(PORT, () => console.log(`Remote Audio Link listening on ${PORT}`));
+// Start server
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`Remote Audio Link running on port ${PORT}`);
+  console.log(`Frontend directory: ${PUBLIC_DIR}`);
+});
