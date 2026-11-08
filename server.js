@@ -15,7 +15,17 @@ const MAX_ROOMS = Number(process.env.MAX_ROOMS || 100);
 app.disable("x-powered-by");
 app.use(helmet({ crossOriginEmbedderPolicy: false }));
 app.use(express.static("public", { extensions: ["html"] }));
-app.get("/health", (_req, res) => res.json({ ok: true, service: "remote-audio-link" }));
+
+
+
+const path = require("path");
+const express = require("express");
+
+
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
 
 const io = new Server(server, {
   cors: {
